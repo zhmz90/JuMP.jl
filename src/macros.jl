@@ -1,8 +1,14 @@
 using Base.Meta
 
 if VERSION > v"0.4.0-"
+    stagedfunction determine_container(x)
+        # error out if type inference has failed at compile-time
+        x == Any && error()
+        :(x)
+    end
     include("parseExpr_staged.jl")
 else
+    determine_container(x) = typeof(x)
     include("parseExpr_0.3.jl")
 end
 
@@ -57,11 +63,13 @@ buildrefsets(c::Nothing) = (gensym(), Any[], Any[], IndexPair[])
 #       idxvars: As defined for buildrefsets
 #       idxsets: As defined for buildrefsets
 #       idxpairs: As defined for buildrefsets
-#       sym: A symbol or expression containing the element type of the 
-#            resulting container, e.g. :AffExpr or :Variable
-function getloopedcode(c::Expr, code, condition, idxvars, idxsets, idxpairs, sym)
+function getloopedcode(c::Expr, code, condition, idxvars, idxsets, idxpairs)
     varname = getname(c)
     hascond = (condition != :())
+
+    precode = copy(code)
+    tmpname = gensym()
+    precode.args[1].args = tmpname
 
     if hascond
         code = quote
@@ -71,6 +79,10 @@ function getloopedcode(c::Expr, code, condition, idxvars, idxsets, idxpairs, sym
     end
 
     for (idxvar, idxset) in zip(reverse(idxvars),reverse(idxsets))
+        precode = quote
+            $(esc(idxvar)) = first($idxset)
+            $precode
+        end
         code = quote
             for $(esc(idxvar)) in $idxset
                 $code
@@ -81,13 +93,17 @@ function getloopedcode(c::Expr, code, condition, idxvars, idxsets, idxpairs, sym
         # force a JuMPDict
         N = length(idxsets)
         clear_dependencies(i) = (isdependent(idxvars,idxsets[i],i) ? nothing : idxsets[i])
-        mac = :($(esc(varname)) = JuMPDict{$(sym),$N}(Dict{NTuple{$N},$sym}(),
+        mac = :($(esc(varname)) = JuMPDict{$(sym),$N}(Dict{NTuple{$N},sym}(),
                                                         $(quot(varname)),
                                                         $(Expr(:tuple,map(clear_dependencies,1:N)...)),
                                                         $idxpairs,
                                                         :()))
     else 
-        mac = Expr(:macrocall,symbol("@gendict"),esc(varname),sym,idxpairs,idxsets...)
+        mac = Expr(:macrocall,symbol("@gendict"),esc(varname),:sym,idxpairs,idxsets...)
+    end
+    mac = quote
+        sym = determine_container(tmpname)
+        $mac
     end
     return quote 
         $mac
@@ -96,7 +112,7 @@ function getloopedcode(c::Expr, code, condition, idxvars, idxsets, idxpairs, sym
     end 
 end
 
-getloopedcode(c, code, condition, idxvars, idxsets, idxpairs, sym) = code
+getloopedcode(c, code, condition, idxvars, idxsets, idxpairs) = code
 
 getname(c::Symbol) = c
 getname(c::Nothing) = ()
@@ -159,7 +175,7 @@ macro addConstraint(m, x, extra...)
               "       expr1 == expr2\n" * "       lb <= expr <= ub")
     end
 
-    return getloopedcode(c, code, :(), idxvars, idxsets, idxpairs, :ConstraintRef)
+    return getloopedcode(c, code, :(), idxvars, idxsets, idxpairs)
 end
 
 macro addConstraints(m, x)
@@ -227,7 +243,7 @@ macro defExpr(args...)
         $(refcall) = $newaff
     end
     
-    return getloopedcode(c, code, :(), idxvars, idxsets, idxpairs, :AffExpr)
+    return getloopedcode(c, code, :(), idxvars, idxsets, idxpairs)
 end
 
 function hasdependentsets(idxvars, idxsets)
@@ -381,7 +397,7 @@ macro defVar(args...)
     # to contain them)
     refcall, idxvars, idxsets, idxpairs = buildrefsets(var)
     code = :( $(refcall) = Variable($m, $lb, $ub, $(quot(t))) )
-    looped = getloopedcode(var, code, condition, idxvars, idxsets, idxpairs, :Variable)
+    looped = getloopedcode(var, code, condition, idxvars, idxsets, idxpairs)
     varname = esc(getname(var))
     return quote 
         $looped
@@ -476,5 +492,5 @@ macro addNLConstraint(m, x, extra...)
               "       expr1 == expr2\n")
     end
 
-    return getloopedcode(c, code, :(), idxvars, idxsets, idxpairs, :(ConstraintRef{NonlinearConstraint}))
+    return getloopedcode(c, code, :(), idxvars, idxsets, idxpairs)
 end
