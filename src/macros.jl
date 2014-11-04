@@ -69,7 +69,7 @@ function getloopedcode(c::Expr, code, condition, idxvars, idxsets, idxpairs)
 
     precode = copy(code)
     tmpname = gensym()
-    precode.args[1].args = tmpname
+    precode = Expr(:(=), tmpname, code.args[2:end]...)
 
     if hascond
         code = quote
@@ -93,7 +93,7 @@ function getloopedcode(c::Expr, code, condition, idxvars, idxsets, idxpairs)
         # force a JuMPDict
         N = length(idxsets)
         clear_dependencies(i) = (isdependent(idxvars,idxsets[i],i) ? nothing : idxsets[i])
-        mac = :($(esc(varname)) = JuMPDict{$(sym),$N}(Dict{NTuple{$N},sym}(),
+        mac = :($(esc(varname)) = JuMPDict{sym,$N}(Dict{NTuple{$N},sym}(),
                                                         $(quot(varname)),
                                                         $(Expr(:tuple,map(clear_dependencies,1:N)...)),
                                                         $idxpairs,
@@ -102,10 +102,13 @@ function getloopedcode(c::Expr, code, condition, idxvars, idxsets, idxpairs)
         mac = Expr(:macrocall,symbol("@gendict"),esc(varname),:sym,idxpairs,idxsets...)
     end
     mac = quote
-        sym = determine_container(tmpname)
+        sym = determine_container($tmpname)
+        println("sym = $sym")
+        println("type = $(typeof(sym))")
         $mac
     end
     return quote 
+        $precode
         $mac
         $code
         nothing
