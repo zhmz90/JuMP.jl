@@ -59,7 +59,7 @@ buildrefsets(c::Nothing) = (gensym(), Any[], Any[], IndexPair[])
 #       idxpairs: As defined for buildrefsets
 #       sym: A symbol or expression containing the element type of the 
 #            resulting container, e.g. :AffExpr or :Variable
-function getloopedcode(c::Expr, code, condition, idxvars, idxsets, idxpairs, sym)
+function getloopedcode(c::Expr, code, rawexpr, condition, idxvars, idxsets, idxpairs, sym)
     varname = getname(c)
     hascond = (condition != :())
 
@@ -85,9 +85,10 @@ function getloopedcode(c::Expr, code, condition, idxvars, idxsets, idxpairs, sym
                                                         $(quot(varname)),
                                                         $(Expr(:tuple,map(clear_dependencies,1:N)...)),
                                                         $idxpairs,
-                                                        :()))
+                                                        :(),
+                                                        $(quot(rawexpr))))
     else 
-        mac = Expr(:macrocall,symbol("@gendict"),esc(varname),sym,idxpairs,idxsets...)
+        mac = Expr(:macrocall,symbol("@gendict"),esc(varname),sym,rawexpr,idxpairs,idxsets...)
     end
     return quote 
         $mac
@@ -96,7 +97,7 @@ function getloopedcode(c::Expr, code, condition, idxvars, idxsets, idxpairs, sym
     end 
 end
 
-getloopedcode(c, code, condition, idxvars, idxsets, idxpairs, sym) = code
+getloopedcode(c, code, rawexpr, condition, idxvars, idxsets, idxpairs, sym) = code
 
 getname(c::Symbol) = c
 getname(c::Nothing) = ()
@@ -167,7 +168,7 @@ macro addConstraint(m, x, extra...)
               "       expr1 == expr2\n" * "       lb <= expr <= ub")
     end
 
-    looped = getloopedcode(c, code, :(), idxvars, idxsets, idxpairs, :ConstraintRef)
+    looped = getloopedcode(c, code, x, :(), idxvars, idxsets, idxpairs, :ConstraintRef)
     conname = esc(getname(c))
     if length(idxvars) == 0 # we will not return a JuMPContainer of ConstraintRef
         return assert_validmodel(m, looped)
@@ -247,7 +248,7 @@ macro defExpr(args...)
         $(refcall) = $newaff
     end
     
-    return getloopedcode(c, code, :(), idxvars, idxsets, idxpairs, :AffExpr)
+    return getloopedcode(c, code, x, :(), idxvars, idxsets, idxpairs, :AffExpr)
 end
 
 function hasdependentsets(idxvars, idxsets)
@@ -404,35 +405,13 @@ macro defVar(args...)
     # to contain them)
     refcall, idxvars, idxsets, idxpairs = buildrefsets(var)
     code = :( $(refcall) = Variable($m, $lb, $ub, $(quot(t))) )
-    looped = getloopedcode(var, code, condition, idxvars, idxsets, idxpairs, :Variable)
+    looped = getloopedcode(var, code, x, condition, idxvars, idxsets, idxpairs, :Variable)
     varname = esc(getname(var))
     return assert_validmodel(m, quote
         $looped
         push!($(m).varDicts, $varname)
         $varname
     end)
-end
-
-macro defConstrRef(var)
-    if isa(var,Symbol)
-        # easy case
-        return esc(:(local $var))
-    else
-        if !isexpr(var,:ref)
-            error("Syntax error: Expected $var to be of form var[...]")
-        end
-        
-        varname = var.args[1]
-        idxsets = var.args[2:end]
-        idxpairs = IndexPair[]
-
-        mac = Expr(:macrocall,symbol("@gendict"),varname,:ConstraintRef,idxpairs, idxsets...)
-        code = quote 
-            $(esc(mac))
-            nothing
-        end
-        return code
-    end
 end
 
 macro setNLObjective(m, sense, x)
@@ -500,7 +479,7 @@ macro addNLConstraint(m, x, extra...)
               "       expr1 <= expr2\n" * "       expr1 >= expr2\n" *
               "       expr1 == expr2\n")
     end
-    looped = getloopedcode(c, code, :(), idxvars, idxsets, idxpairs, :(ConstraintRef{NonlinearConstraint}))
+    looped = getloopedcode(c, code, x, :(), idxvars, idxsets, idxpairs, :(ConstraintRef{NonlinearConstraint}))
     code = quote
         initNLP($m)
         $looped

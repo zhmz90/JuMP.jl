@@ -164,8 +164,6 @@ facts("[print] JuMPContainer{Variable}") do
     end
 end
 
-
-
 facts("[print] JuMPContainer{Number}") do
     # The same output for REPL and IJulia, so only testing one
     mod = Model()

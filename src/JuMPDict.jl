@@ -8,6 +8,7 @@ type IndexPair
     idxvar
     idxset
 end
+
 #= Generated on the fly
 type JuMPArray{T}
     innerArray::Array{T,N}
@@ -21,6 +22,7 @@ type JuMPDict{T,N} <: JuMPContainer{T,N}
     indexsets
     indexexprs::Vector{IndexPair}
     condition
+    innerexpr::Expr
 end
 
 
@@ -33,7 +35,7 @@ Base.setindex!(d::JuMPDict, value, t...) = (d.tupledict[t] = value)
 function Base.map{T,N}(f::Function, d::JuMPDict{T,N})
     ret = Base.return_types(f, (T,))
     R = (length(ret) == 1 ? ret[1] : Any)
-    x = JuMPDict(Dict{NTuple{N},R}(), d.name, copy(d.indexsets), copy(d.indexexprs), copy(d.condition))
+    x = JuMPDict(Dict{NTuple{N},R}(), d.name, copy(d.indexsets), copy(d.indexexprs), copy(d.condition), copy(d.innerexpr))
     for (k,v) in d.tupledict
         x.tupledict[k] = f(v)
     end
@@ -47,7 +49,7 @@ Base.isempty(d::JuMPDict)  = (isempty(d.tupledict))
 # the following types of index sets are allowed:
 # 0:K -- range with compile-time starting index
 # S -- general iterable set
-macro gendict(instancename,T,idxpairs,idxsets...)
+macro gendict(instancename,T,exprcode,idxpairs,idxsets...)
     N = length(idxsets)
     allranges = all(s -> (isexpr(s,:(:)) && length(s.args) == 2), idxsets)
     if allranges
@@ -115,7 +117,7 @@ macro gendict(instancename,T,idxpairs,idxsets...)
     else
         # JuMPDict
         return :(
-            $(esc(instancename)) = JuMPDict{$T,$N}(Dict{NTuple{$N},$T}(),$(quot(instancename)), $(esc(Expr(:tuple,idxsets...))), $idxpairs, :())
+            $(esc(instancename)) = JuMPDict{$T,$N}(Dict{NTuple{$N},$T}(),$(quot(instancename)), $(esc(Expr(:tuple,idxsets...))), $idxpairs, :(), :())
         )
     end
 end
