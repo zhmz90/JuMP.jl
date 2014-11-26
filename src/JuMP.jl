@@ -72,7 +72,8 @@ type Model
     heurcallback
 
     # List of JuMPContainer{Variables} associated with model
-    dictList::Vector
+    varDicts::Vector
+    conDicts::Vector
 
     # storage vector for merging duplicate terms
     indexedVector::IndexedVector{Float64}
@@ -98,7 +99,7 @@ function Model(;solver=UnsetSolver())
     Model(QuadExpr(),:Min,LinearConstraint[], QuadConstraint[],SOSConstraint[],
           0,String[],String[],Float64[],Float64[],Symbol[],
           0,Float64[],Float64[],Float64[],nothing,solver,
-          false,nothing,nothing,nothing,JuMPContainer[],
+          false,nothing,nothing,nothing,JuMPContainer[],JuMPContainer[],
           IndexedVector(Float64,0),nothing,Dict{Symbol,Any}())
 end
 

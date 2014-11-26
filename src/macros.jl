@@ -167,7 +167,17 @@ macro addConstraint(m, x, extra...)
               "       expr1 == expr2\n" * "       lb <= expr <= ub")
     end
 
-    return assert_validmodel(m, getloopedcode(c, code, :(), idxvars, idxsets, idxpairs, :ConstraintRef))
+    looped = getloopedcode(c, code, :(), idxvars, idxsets, idxpairs, :ConstraintRef)
+    conname = esc(getname(c))
+    if length(idxvars) == 0 # we will not return a JuMPContainer of ConstraintRef
+        return assert_validmodel(m, looped)
+    else
+        return assert_validmodel(m, quote
+            $looped
+            push!($(m).conDicts, $conname)
+            $conname
+        end)
+    end
 end
 
 macro addConstraints(m, x)
@@ -398,7 +408,7 @@ macro defVar(args...)
     varname = esc(getname(var))
     return assert_validmodel(m, quote
         $looped
-        push!($(m).dictList, $varname)
+        push!($(m).varDicts, $varname)
         $varname
     end)
 end

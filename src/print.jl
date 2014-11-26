@@ -156,7 +156,7 @@ function model_str(mode, m::Model, leq, geq, in_set,
     
     # Display indexed variables
     in_dictlist = falses(m.numCols)
-    for d in m.dictList
+    for d in m.varDicts
         str *= sep * cont_str(mode,d,mathmode=true)  * eol
         for it in d  # Mark variables in JuMPContainer as printed
             in_dictlist[it[end].col] = true
@@ -218,7 +218,7 @@ Base.writemime(io::IO, ::MIME"text/latex", v::Variable) =
 function var_str(mode, m::Model, col::Int, ind_open, ind_close)
     colNames = mode == REPLMode ? m.colNames : m.colNamesIJulia
     if colNames[col] == ""
-        for cont in m.dictList
+        for cont in m.varDicts
             fill_var_names(mode, colNames, cont)
         end
     end
