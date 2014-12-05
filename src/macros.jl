@@ -170,7 +170,10 @@ macro addConstraint(m, x, extra...)
     return assert_validmodel(m, getloopedcode(c, code, :(), idxvars, idxsets, idxpairs, :ConstraintRef))
 end
 
-macro addConstraints(m, x)
+macro addConstraints(m, x, extra...)
+    @assert length(extra) <= 1
+    c = length(extra) == 1 ? x        : nothing
+    x = length(extra) == 1 ? extra[1] : x
     x.head == :block || error("Invalid syntax for @addConstraints")
     @assert x.args[1].head == :line
     code = quote end
@@ -178,17 +181,17 @@ macro addConstraints(m, x)
         if it.head == :line
             # do nothing
         elseif it.head == :comparison # regular constraint
-            mac = Expr(:macrocall,symbol("@addConstraint"), esc(m), esc(it))
+            if c == nothing
+                mac = Expr(:macrocall,symbol("@addConstraint"), esc(m), esc(it))
+            else
+                mac = Expr(:macrocall,symbol("@addConstraint"), esc(m), esc(c), esc(it))
+            end
             code = quote
                     $code
                     $mac
-                    end
-        elseif it.head == :tuple # constraint ref
-            mac = Expr(:macrocall,symbol("@addConstraint"), esc(m), esc(it.args[1]), esc(it.args[2]))
-            code = quote
-                    $code
-                    $mac
-                    end
+            end
+        else
+            error("Specifying index sets for each constraint is deprecated; specify once in the second argument to @addConstraints")
         end
     end
     return quote 

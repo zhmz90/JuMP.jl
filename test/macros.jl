@@ -168,15 +168,17 @@ facts("[macros] @addConstraints") do
     @defVar(m, x)
     @defVar(m, y[1:3])
 
-    @addConstraints m begin
-        x + y[1] == 1
-        ref[i=1:3], y[1] + y[i] >= i
-    end
+    @addConstraints(m, ref[i=1:3], begin
+        x + y[i] == 1
+        y[1] + y[i] >= i
+    end)
 
     @fact conToStr(m.linconstr[1]) => "x + y[1] $eq 1"
-    @fact conToStr(m.linconstr[2]) => "2 y[1] $geq 1"
-    @fact conToStr(m.linconstr[3]) => "y[1] + y[2] $geq 2"
-    @fact conToStr(m.linconstr[4]) => "y[1] + y[3] $geq 3"
+    @fact conToStr(m.linconstr[2]) => "x + y[2] $eq 1"
+    @fact conToStr(m.linconstr[3]) => "x + y[3] $eq 1"
+    @fact conToStr(m.linconstr[4]) => "2 y[1] $geq 1"
+    @fact conToStr(m.linconstr[5]) => "y[1] + y[2] $geq 2"
+    @fact conToStr(m.linconstr[6]) => "y[1] + y[3] $geq 3"
 end
 
 facts("[macros] @setObjective with quadratic") do
