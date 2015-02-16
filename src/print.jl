@@ -138,7 +138,7 @@ function model_str(mode, m::Model, leq, geq, in_set,
                       (m.objSense == :Max ? "Max" : "Min")
     str = obj_sense * sep
     if nlp != nothing && nlp.nlobj != nothing
-        str *= (qobj_str=="0"?"":"$qobj_str + ") * "(nonlinear expression)"
+        str *= (qobj_str=="0"?"":"$qobj_str + ") * nle_str(nlp.nlobj)
     else
         str *= qobj_str
     end
@@ -737,3 +737,34 @@ Base.writemime(io::IO, ::MIME"text/latex", c::ConstraintRef{QuadConstraint}) =
     print(io, con_str(IJuliaMode,c.m.quadconstr[c.idx],mathmode=false))
 Base.writemime(io::IO, ::MIME"text/latex", c::ConstraintRef{SOSConstraint}) =
     print(io, con_str(IJuliaMode,c.m.sosconstr[c.idx],mathmode=false))
+
+
+#------------------------------------------------------------------------
+## Nonlinear Expression
+#------------------------------------------------------------------------
+Base.print(io::IO, s::ReverseDiffSparse.SymbolicOutput) = print(io, nle_str(s))
+function nle_str(s::ReverseDiffSparse.SymbolicOutput)
+    function descend(e::Expr)
+        println("---")
+        @show e
+        dump(e)
+        println("---")
+        if e.head == :call
+            # Collect arguments that aren't the operator
+            str_args = [descend(e.args[i]) for i in 2:length(e.args)]
+            return "(" * join(str_args, " $(e.args[1]) ") * ")"
+        else
+            string(e)
+        end
+    end
+    function descend(e::Symbol)
+        str_e = string(e)
+        if str_e[1:3] == "__R"
+            return str_e[end:end]
+        else
+            str_e
+        end
+    end
+    descend(e) = string(e)
+    descend(s.tree)
+end
