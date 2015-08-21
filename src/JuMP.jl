@@ -76,6 +76,9 @@ type Model
     colUpper::Vector{Float64}
     colCat::Vector{Symbol}
 
+    # Variable cones of the form, e.g. (:SDP, 1:9)
+    varCones::Vector{Tuple{Symbol,Any}}
+
     # Solution data
     objVal
     colVal::Vector{Float64}
@@ -101,15 +104,13 @@ type Model
     # List of JuMPContainer{Variables} associated with model
     dictList::Vector
 
-    # Dictionary that maps JuMPContainer/Array{Variable} => group name
-    groupName::Dict{Any,Symbol}
-
     # storage vector for merging duplicate terms
     indexedVector::IndexedVector{Float64}
 
     nlpdata#::NLPData
 
     varDict::Dict{Symbol,Any} # dictionary from variable names to variable objects
+    varData::Dict
 
     getvalue_counter::Int # number of times we call getValue on a JuMPContainer, so that we can print out a warning
     operator_counter::Int # number of times we add large expressions
@@ -130,37 +131,38 @@ function Model(;solver=UnsetSolver())
     if !isa(solver,MathProgBase.AbstractMathProgSolver)
         error("solver argument ($solver) must be an AbstractMathProgSolver")
     end
-    Model(zero(QuadExpr),           # obj
-          :Min,                     # objSense
-          LinearConstraint[],       # linconstr
-          QuadConstraint[],         # quadconstr
-          SOSConstraint[],          # sosconstr
-          SOCConstraint[],          # socconstr
-          SDPConstraint[],          # sdpconstr
-          0,                        # numCols
-          UTF8String[],             # colNames
-          UTF8String[],             # colNamesIJulia
-          Float64[],                # colLower
-          Float64[],                # colUpper
-          Symbol[],                 # colCat
-          0,                         # objVal
-          Float64[],                # colVal
-          Float64[],                # redCosts
-          Float64[],                # linconstrDuals
-          nothing,                  # internalModel
-          solver,                   # solver
-          false,                    # internalModelLoaded
-          Any[],                    # callbacks
-          nothing,                  # solvehook
-          nothing,                  # printhook
-          Any[],                    # dictList
-          Dict{Any,Symbol}(),       # groupName
-          IndexedVector(Float64,0), # indexedVector
-          nothing,                  # nlpdata
-          Dict{Symbol,Any}(),       # varDict
-          0,                        # getvalue_counter
-          0,                        # operator_counter
-          Dict{Symbol,Any}(),       # ext
+    Model(zero(QuadExpr),              # obj
+          :Min,                        # objSense
+          LinearConstraint[],          # linconstr
+          QuadConstraint[],            # quadconstr
+          SOSConstraint[],             # sosconstr
+          SOCConstraint[],             # socconstr
+          SDPConstraint[],             # sdpconstr
+          0,                           # numCols
+          UTF8String[],                # colNames
+          UTF8String[],                # colNamesIJulia
+          Float64[],                   # colLower
+          Float64[],                   # colUpper
+          Symbol[],                    # colCat
+          Vector{Tuple{Symbol,Any}}[], # varCones
+          0,                           # objVal
+          Float64[],                   # colVal
+          Float64[],                   # redCosts
+          Float64[],                   # linconstrDuals
+          nothing,                     # internalModel
+          solver,                      # solver
+          false,                       # internalModelLoaded
+          Any[],                       # callbacks
+          nothing,                     # solvehook
+          nothing,                     # printhook
+          Any[],                       # dictList
+          IndexedVector(Float64,0),    # indexedVector
+          nothing,                     # nlpdata
+          Dict{Symbol,Any}(),          # varDict
+          Dict(),                      # varData
+          0,                           # getvalue_counter
+          0,                           # operator_counter
+          Dict{Symbol,Any}(),          # ext
     )
 end
 
@@ -393,6 +395,13 @@ function verify_ownership(m::Model, vec::Vector{Variable})
 end
 
 Base.copy(v::Variable, new_model::Model) = Variable(new_model, v.col)
+function Base.copy(v::Array{Variable}, new_model::Model)
+    ret = similar(v, Variable, size(v))
+    for I in eachindex(v)
+        ret[I] = Variable(new_model, v[I].col)
+    end
+    ret
+end
 
 # Copy methods for variable containers
 Base.copy(d::JuMPContainer) = map(copy, d)

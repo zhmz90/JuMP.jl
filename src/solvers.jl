@@ -494,28 +494,20 @@ function collect_expr!(m, tmprow, terms::AffExpr)
 end
 
 function conicconstraintdata(m::Model)
-    var_cones = Any[]
+    var_cones = Any[cone for cone in m.varCones]
     con_cones = Any[]
     nnz = 0
 
     # find starting column indices for sdp matrices
-    sdp_indices = Int[]
     numSDPRows = 0
     numSymRows = 0
     for c in m.sdpconstr
         n = size(c.terms,1)
         @assert n == size(c.terms,2)
         @assert ndims(c.terms) == 2
-        if issym(c.terms) && isa(c.terms, Matrix{Variable})
-            # TODO: push all indices into list instead of using a range
-            indices = [v.col for v in c.terms]
-            append!(sdp_indices, indices)
-            push!(var_cones, (:SDP, indices))
-        else
-            numSDPRows += convert(Int, n*(n+1)/2)
-            for i in 1:n, j in i:n
-                nnz += length(c.terms[i,j].coeffs)
-            end
+        numSDPRows += convert(Int, n*(n+1)/2)
+        for i in 1:n, j in i:n
+            nnz += length(c.terms[i,j].coeffs)
         end
         if !issym(c.terms)
             # symmetry constraints
@@ -571,10 +563,6 @@ function conicconstraintdata(m::Model)
         numQuadRows += length(cone)
     end
 
-    # Create sparse A matrix
-    # First we build it row-wise, then use the efficient transpose
-    # Theory is, this is faster than us trying to do it ourselves
-    # Intialize storage
     linconstr = m.linconstr::Vector{LinearConstraint}
     numLinRows = length(linconstr)
     numBounds = 0
@@ -582,29 +570,33 @@ function conicconstraintdata(m::Model)
     nonPos  = Int[]
     free    = Int[]
     zeroVar = Int[]
-    in_sdp = false
     for i in 1:m.numCols
+        seen = false
         lb, ub = m.colLower[i], m.colUpper[i]
-        if i in sdp_indices
-            @assert lb == -Inf && ub == Inf
+        for (_,cone) in m.varCones
+            if i in cone
+                seen = true
+                @assert lb == -Inf && ub == Inf
+                break
+            end
         end
 
-        if !(lb == 0 || lb == -Inf)
-            numBounds += 1
-        end
-        if !(ub == 0 || ub == Inf)
-            numBounds += 1
-        end
-        if lb == 0 && ub == 0
-            push!(zeroVar, i)
-        elseif lb == 0
-            push!(nonNeg, i)
-        elseif ub == 0
-            push!(nonPos, i)
-        elseif in_sdp
-            # do nothing
-        else
-            push!(free, i)
+        if !seen
+            if !(lb == 0 || lb == -Inf)
+                numBounds += 1
+            end
+            if !(ub == 0 || ub == Inf)
+                numBounds += 1
+            end
+            if lb == 0 && ub == 0
+                push!(zeroVar, i)
+            elseif lb == 0
+                push!(nonNeg, i)
+            elseif ub == 0
+                push!(nonPos, i)
+            else
+                push!(free, i)
+            end
         end
     end
 
@@ -765,22 +757,20 @@ function conicconstraintdata(m::Model)
     @assert c == numLinRows + numBounds + numQuadRows + numSOCRows
 
     for con in m.sdpconstr
-        if !(issym(con.terms) && isa(con.terms, Matrix{Variable}))
-            sdp_start = c + 1
-            n = size(con.terms,1)
-            for i in 1:n, j in i:n
-                c += 1
-                terms::AffExpr = con.terms[i,j]
-                collect_expr!(m, tmprow, terms)
-                nnz = tmprow.nnz
-                indices = tmpnzidx[1:nnz]
-                append!(I, fill(c, nnz))
-                append!(J, indices)
-                append!(V, -tmpelts[indices])
-                b[c] = terms.constant
-            end
-            push!(con_cones, (:SDP, sdp_start:c))
+        sdp_start = c + 1
+        n = size(con.terms,1)
+        for i in 1:n, j in i:n
+            c += 1
+            terms::AffExpr = con.terms[i,j]
+            collect_expr!(m, tmprow, terms)
+            nnz = tmprow.nnz
+            indices = tmpnzidx[1:nnz]
+            append!(I, fill(c, nnz))
+            append!(J, indices)
+            append!(V, -tmpelts[indices])
+            b[c] = terms.constant
         end
+        push!(con_cones, (:SDP, sdp_start:c))
         if !issym(con.terms)
             sym_start = c + 1
             # add linear symmetry constraints

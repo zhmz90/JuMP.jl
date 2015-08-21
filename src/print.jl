@@ -263,17 +263,18 @@ Base.writemime(io::IO, ::MIME"text/latex", v::Variable) =
     print(io, var_str(IJuliaMode,v,mathmode=false))
 function var_str(mode, m::Model, col::Int; mathmode=true)
     colNames = mode == REPLMode ? m.colNames : m.colNamesIJulia
-    if colNames[col] == ""
+    if colNames[col] === EMPTYSTRING
         for cont in m.dictList
-            fill_var_names(mode, colNames, cont)
+            fill_var_names(m, mode, colNames, cont)
         end
     end
     return math(colNames[col] == "" ? "col_$col" : colNames[col], mathmode)
 end
-function fill_var_names{N}(mode, colNames, v::JuMPArray{Variable,N})
-    idxsets = v.indexsets
+function fill_var_names{N}(m::Model, mode, colNames, v::JuMPArray{Variable,N})
+    data = m.varData[v]
+    idxsets = data.indexsets
     lengths = map(length, idxsets)
-    name = v.name
+    name = data.name
     cprod = cumprod([lengths...])
     for (ind,var) in enumerate(v.innerArray)
         idx_strs = [string( idxsets[1][mod1(ind,lengths[1])] )]
@@ -287,8 +288,8 @@ function fill_var_names{N}(mode, colNames, v::JuMPArray{Variable,N})
         end
     end
 end
-function fill_var_names(mode, colNames, v::JuMPDict{Variable})
-    name = v.name
+function fill_var_names(m::Model, mode, colNames, v::JuMPDict{Variable})
+    name = m.varData[v].name
     for (ind,var) in zip(keys(v),values(v))
         if mode == IJuliaMode
             colNames[var.col] = string(name, "_{", join([string(i) for i in ind],","), "}")
@@ -297,17 +298,18 @@ function fill_var_names(mode, colNames, v::JuMPDict{Variable})
         end
     end
 end
-function fill_var_names(mode, colNames, v::Array{Variable})
+function fill_var_names(m::Model, mode, colNames, v::Array{Variable})
     isempty(v) && return
     sizes = size(v)
-    m = first(v).m
-    name = m.groupName[v]
-    for (ii,var) in enumerate(v)
-        ind = ind2sub(sizes, ii)
-        colNames[var.col] = if mode === IJuliaMode
-            string(name, "_{", join(ind, ","), "}")
-        else
-            string(name,  "[", join(ind, ","), "]")
+    if haskey(m.varData, v)
+        name = m.varData[v].name
+        for (ii,var) in enumerate(v)
+            ind = ind2sub(sizes, ii)
+            colNames[var.col] = if mode === IJuliaMode
+                string(name, "_{", join(ind, ","), "}")
+            else
+                string(name,  "[", join(ind, ","), "]")
+            end
         end
     end
     nothing
@@ -351,12 +353,15 @@ Base.show( io::IO, j::JuMPContainer{Variable}) = print(io, cont_str(REPLMode,j))
 Base.writemime(io::IO, ::MIME"text/latex", j::JuMPContainer{Variable}) =
     print(io, cont_str(IJuliaMode,j,mathmode=false))
 # Generic string converter, called by mode-specific handlers
-function cont_str(mode, j::JuMPContainer{Variable}, sym::PrintSymbols)
+function cont_str(mode, j, sym::PrintSymbols)
     # Check if anything in the container
-    isempty(j) && return string(j.name, " (no indices)")
+    isempty(j) && return string("(no indices)")
+
+    m = first(values(j)).m
+    data = m.varData[j]
 
     # 1. construct the part with variable name and indexing
-    locvars = map(j.indexexprs) do tmp
+    locvars = map(data.indexexprs) do tmp
         var = tmp.idxvar
         if var == nothing
             return ""
@@ -364,11 +369,11 @@ function cont_str(mode, j::JuMPContainer{Variable}, sym::PrintSymbols)
             return string(var)
         end
     end
-    num_dims = length(j.indexsets)
+    num_dims = length(data.indexsets)
     idxvars = Array(UTF8String, num_dims)
     dimidx = 1
     for i in 1:num_dims
-        if j.indexexprs[i].idxvar == nothing
+        if data.indexexprs[i].idxvar == nothing
             while DIMS[dimidx] in locvars
                 dimidx += 1
             end
@@ -381,113 +386,14 @@ function cont_str(mode, j::JuMPContainer{Variable}, sym::PrintSymbols)
             idxvars[i] = locvars[i]
         end
     end
-    name_idx = string(j.name, sym[:ind_open], join(idxvars,","), sym[:ind_close])
-    # 2. construct part with what we index over
-    idx_sets = sym[:for_all]*" "*join(map(dim->string(idxvars[dim], " ", sym[:in],
-                                " ", sym[:open_set],
-                                cont_str_set(j.indexsets[dim],sym[:mid_set]),
-                                sym[:close_set]), 1:num_dims), ", ")
-    # 3. Handle any conditions
-    if isa(j, JuMPDict) && j.condition != :()
-       idx_sets *= string(" s.t. ",join(parse_conditions(j.condition), " and "))
-    end
-
-    # 4. Bounds and category, if possible, and return final string
-    a_var = first(values(j))
-    model = a_var.m
-    var_cat = model.colCat[a_var.col]
-    var_lb  = model.colLower[a_var.col]
-    var_ub  = model.colUpper[a_var.col]
-    # Variables may have different bounds, so we can't really print nicely
-    # at this time (possibly ever, as they could have been changed post
-    # creation, which we'd never be able to handle.
-    all_same_lb = true
-    all_same_ub = true
-    for var in values(j)
-        all_same_lb &= model.colLower[var.col] == var_lb
-        all_same_ub &= model.colUpper[var.col] == var_ub
-    end
-    str_lb = var_lb == -Inf ? "-"*sym[:infty] : str_round(var_lb)
-    str_ub = var_ub == +Inf ?     sym[:infty] : str_round(var_ub)
-    # Special case bounds printing based on the category
-    if var_cat == :Bin  # x in {0,1}
-        return "$name_idx $(sym[:in]) $(sym[:open_set])0,1$(sym[:close_set]) $idx_sets"
-    elseif var_cat == :SemiInt  # x in union of 0 and {lb,...,ub}
-        si_lb = all_same_lb ? str_lb : ".."
-        si_ub = all_same_ub ? str_ub : ".."
-        return "$name_idx $(sym[:in]) $(sym[:open_set])$si_lb$(sym[:mid_set])$si_ub$(sym[:close_set]) $(sym[:union]) $(sym[:open_set])0$(sym[:close_set]) $idx_sets"
-    elseif var_cat == :SemiCont  # x in union of 0 and [lb,ub]
-        si_lb = all_same_lb ? str_lb : ".."
-        si_ub = all_same_ub ? str_ub : ".."
-        return "$name_idx $(sym[:in]) $(sym[:open_rng])$si_lb,$si_ub$(sym[:close_rng]) $(sym[:union]) $(sym[:open_set])0$(sym[:close_set]) $idx_sets"
-    elseif var_cat == :Fixed
-        si_bnd = all_same_lb ? str_lb : ".."
-        return "$name_idx = $si_bnd $idx_sets"
-    end
-    # Continuous and Integer
-    idx_sets = var_cat == :Int ? ", $(sym[:integer]), $idx_sets" : " $idx_sets"
-    if all_same_lb && all_same_ub
-        # Free variable
-        var_lb == -Inf && var_ub == +Inf && return "$name_idx free$idx_sets"
-        # No lower bound
-        var_lb == -Inf && return "$name_idx $(sym[:leq]) $str_ub$idx_sets"
-        # No upper bound
-        var_ub == +Inf && return "$name_idx $(sym[:geq]) $str_lb$idx_sets"
-        # Range
-        return "$str_lb $(sym[:leq]) $name_idx $(sym[:leq]) $str_ub$idx_sets"
-    end
-    if all_same_lb && !all_same_ub
-        var_lb == -Inf && return "$name_idx $(sym[:leq]) ..$idx_sets"
-        return "$str_lb $(sym[:leq]) $name_idx $(sym[:leq]) ..$idx_sets"
-    end
-    if !all_same_lb && all_same_ub
-        var_ub == +Inf && return "$name_idx $(sym[:geq]) ..$idx_sets"
-        return ".. $(sym[:leq]) $name_idx $(sym[:leq]) $str_ub$idx_sets"
-    end
-    return ".. $(sym[:leq]) $name_idx $(sym[:leq]) ..$idx_sets"
-end
-function cont_str{N}(mode, j::Array{Variable,N}, leq, eq, geq,
-                            ind_open, ind_close, for_all, in_set,
-                            open_set, mid_set, close_set, union, infty,
-                            open_rng, close_rng, integer)
-    # Check if anything in the container
-    # TODO: find a way to grab the model so we can get the name
-    isempty(j) && return string()
-
-    # 1. construct the part with variable name and indexing
-    locvars = map(j.indexexprs) do tmp
-        var = tmp.idxvar
-        if var == nothing
-            return ""
-        else
-            return string(var)
-        end
-    end
-    num_dims = length(j.indexsets)
-    idxvars = Array(UTF8String, num_dims)
-    dimidx = 1
-    for i in 1:num_dims
-        if j.indexexprs[i].idxvar == nothing
-            while DIMS[dimidx] in locvars
-                dimidx += 1
-            end
-            if dimidx > length(DIMS)
-                error("Unexpectedly ran out of indices")
-            end
-            idxvars[i] = DIMS[dimidx]
-            dimidx += 1
-        else
-            idxvars[i] = locvars[i]
-        end
-    end
-    name_idx = string(j.name, ind_open, join(idxvars,","), ind_close)
+    name_idx = string(data.name, ind_open, join(idxvars,","), ind_close)
     # 2. construct part with what we index over
     idx_sets = for_all*" "*join(map(dim->string(idxvars[dim], " ", in_set, " ", open_set,
-                                cont_str_set(j.indexsets[dim], mid_set),
+                                cont_str_set(data.indexsets[dim], mid_set),
                                 close_set), 1:num_dims), ", ")
     # 3. Handle any conditions
-    if isa(j, JuMPDict) && j.condition != :()
-       idx_sets *= " s.t. $(join(parse_conditions(j.condition), " and "))"
+    if isa(j, JuMPDict) && data.condition != :()
+       idx_sets *= " s.t. $(join(parse_conditions(data.condition), " and "))"
     end
 
     # 4. Bounds and category, if possible, and return final string
@@ -544,6 +450,7 @@ function cont_str{N}(mode, j::Array{Variable,N}, leq, eq, geq,
     end
     return ".. $leq $name_idx $leq ..$idx_sets"
 end
+
 # UTILITY FUNCTIONS FOR cont_str
 function cont_str_set(idxset::Union(Range,Array), mid_set)  # 2:2:20 -> {2,4..18,20}
     length(idxset) == 1 && return string(idxset[1])
@@ -568,9 +475,9 @@ function parse_conditions(expr::Expr)
 end
 
 # Handlers to use correct symbols
-cont_str(::Type{REPLMode}, j::JuMPContainer{Variable}; mathmode=false) =
+cont_str(::Type{REPLMode}, j; mathmode=false) =
     cont_str(REPLMode, j, repl)
-cont_str(::Type{IJuliaMode}, j::JuMPContainer{Variable}; mathmode=true) =
+cont_str(::Type{IJuliaMode}, j; mathmode=true) =
     math(cont_str(IJuliaMode, j, ijulia), mathmode)
 
 #------------------------------------------------------------------------
@@ -579,11 +486,16 @@ cont_str(::Type{IJuliaMode}, j::JuMPContainer{Variable}; mathmode=true) =
 Base.print(io::IO, j::JuMPContainer{Float64}) = print(io, val_str(REPLMode,j))
 Base.show( io::IO, j::JuMPContainer{Float64}) = print(io, val_str(REPLMode,j))
 function val_str{N}(mode, j::JuMPArray{Float64,N})
-    out_str = "$(j.name): $N dimensions:\n"
+    if isempty(j)
+        return "(no entries)"
+    end
+    m = first(values(j)).m
+    data = m.varData[j]
+    out_str = "$(data.name): $N dimensions:\n"
 
     function val_str_rec(depth, parent_index::Vector{Any}, parent_str::String)
         # Turn index set into strings
-        indexset = j.indexsets[depth]
+        indexset = data.indexsets[depth]
         index_strs = map(string, indexset)
 
         # Determine longest index so we can align columns
@@ -638,9 +550,11 @@ function _isless(t1::Tuple, t2::Tuple)
 end
 function val_str(mode, dict::JuMPDict{Float64})
     nelem = length(dict.tupledict)
-    out_str  = "$(dict.name): $(length(dict.indexsets)) dimensions, $nelem "
+    isempty(dict) && return ""
+    m = first(dict).m
+    data = m.varData[dict]
+    out_str  = "$(dict.name): $(length(data.indexsets)) dimensions, $nelem "
     out_str *= nelem == 1 ? "entry" : "entries"
-    isempty(dict) && return out_str
     out_str *= ":"
 
     sortedkeys = sort(collect(keys(dict.tupledict)), lt = _isless)

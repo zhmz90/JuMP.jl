@@ -98,7 +98,7 @@ facts("[variable] JuMPContainer iteration") do
     @defVar(m, ja[1:3,2:5,1:2])
     @defVar(m, jd[1:3,[:red,:blue]])
 
-    @fact length(keys(oia)) == length(values(oia)) == 3*4*2 --> true
+    # @fact length(keys(oia)) == length(values(oia)) == 3*4*2 --> true
     @fact length(keys(ja))  == length(values(ja))  == 3*4*2 --> true
     @fact length(keys(jd))  == length(values(jd))  == 3*2   --> true
 

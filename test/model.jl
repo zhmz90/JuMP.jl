@@ -396,7 +396,7 @@ facts("[model] Test model copying") do
     @fact Set(collect(keys(dest.varDict))) --> Set([:x,:y,:z,:w,:v])
     @fact JuMP._isequal(dest.varDict[:x], Variable(dest, 1)) --> true
     @fact JuMP._isequal(dest.varDict[:y], Variable(dest, 2)) --> true
-    @fact all(t -> JuMP._isequal(t[1], t[2]), zip(dest.varDict[:z].innerArray, [Variable(dest, 3), Variable(dest, 4), Variable(dest, 5)])) --> true
+    @fact all(t -> JuMP._isequal(t[1], t[2]), zip(dest.varDict[:z], [Variable(dest, 3), Variable(dest, 4), Variable(dest, 5)])) --> true
     @fact all(t -> JuMP._isequal(t[1], t[2]), zip(dest.varDict[:w].innerArray, [Variable(dest, 6), Variable(dest, 7), Variable(dest, 8)])) --> true
     td = dest.varDict[:v].tupledict
     @fact length(td) --> 3

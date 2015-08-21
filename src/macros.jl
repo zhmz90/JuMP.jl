@@ -117,12 +117,7 @@ function getloopedcode(c::Expr, code, condition, idxvars, idxsets, idxpairs, sym
     if hascond || hasdependentsets(idxvars,idxsets)
         # force a JuMPDict
         N = length(idxsets)
-        clear_dependencies(i) = (isdependent(idxvars,idxsets[i],i) ? nothing : idxsets[i])
-        mac = :($(esc(varname)) = JuMPDict{$(sym),$N}(Dict{NTuple{$N},$sym}(),
-                                                        $(quot(varname)),
-                                                        $(Expr(:tuple,map(clear_dependencies,1:N)...)),
-                                                        $idxpairs,
-                                                        $(quot(condition))))
+        mac = :($(esc(varname)) = JuMPDict{$(sym),$N}(Dict{NTuple{$N},$sym}()))
     else
         mac = Expr(:macrocall,symbol("@gendict"),esc(varname),sym,idxpairs,idxsets...)
     end
@@ -808,6 +803,8 @@ macro defVar(args...)
     # We now build the code to generate the variables (and possibly the JuMPDict
     # to contain them)
     refcall, idxvars, idxsets, idxpairs, condition = buildrefsets(var)
+    clear_dependencies(i) = (isdependent(idxvars,idxsets[i],i) ? nothing : idxsets[i])
+
     code = :( $(refcall) = Variable($m, $lb, $ub, $(quot(t)), EMPTYSTRING, $value) )
     if symmetric
         # Sanity checks on SDP input stuff
@@ -838,14 +835,16 @@ macro defVar(args...)
             (issym($lb) && issym($ub)) || error("Bounds on symmetric variables must be symmetric")
             $looped
             push!($(m).dictList, $varname)
-            $(m).groupName[$varname] = $(quot(getname(var)))
         end
         if sdp
-            code = :($code; push!($(m).sdpconstr, SDPConstraint($varname)))
+            code = :($code; push!($(m).varCones, (:SDP, first($varname).col : last($varname).col)))
         end
         return assert_validmodel(m, quote
             $code
             registervar($m, $(quot(getname(var))), $varname)
+            storecontainerdata($m, $varname, $(quot(getname(var))),
+                               $(Expr(:tuple,map(clear_dependencies,1:length(idxsets))...)),
+                               $idxpairs, $(quot(condition)))
             $varname
         end)
     else
@@ -854,11 +853,18 @@ macro defVar(args...)
         return assert_validmodel(m, quote
             $looped
             push!($(m).dictList, $varname)
-            $(m).groupName[$varname] = $(quot(getname(var)))
             registervar($m, $(quot(getname(var))), $varname)
+            storecontainerdata($m, $varname, $(quot(getname(var))),
+                               $(Expr(:tuple,map(clear_dependencies,1:length(idxsets))...)),
+                               $idxpairs, $(quot(condition)))
             $varname
         end)
     end
+end
+
+function storecontainerdata(m::Model, variable, varname, idxsets, idxpairs, condition)
+    m.varData[variable] = JuMPContainerData(varname, idxsets, idxpairs, condition)
+    nothing
 end
 
 macro defConstrRef(var)
