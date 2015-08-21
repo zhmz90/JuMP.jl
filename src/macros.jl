@@ -838,6 +838,7 @@ macro defVar(args...)
             (issym($lb) && issym($ub)) || error("Bounds on symmetric variables must be symmetric")
             $looped
             push!($(m).dictList, $varname)
+            $(m).groupName[$varname] = $(quot(getname(var)))
         end
         if sdp
             code = :($code; push!($(m).sdpconstr, SDPConstraint($varname)))
@@ -853,6 +854,7 @@ macro defVar(args...)
         return assert_validmodel(m, quote
             $looped
             push!($(m).dictList, $varname)
+            $(m).groupName[$varname] = $(quot(getname(var)))
             registervar($m, $(quot(getname(var))), $varname)
             $varname
         end)

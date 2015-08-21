@@ -7,9 +7,6 @@ import Base: promote_rule, promote_type, cat_t, hcat, vcat, hvcat, cat
 
 immutable DummyJuMPArray end
 
-Base.promote_rule{T<:OneIndexedArray,S<:OneIndexedArray}(::Type{T},::Type{S}) = DummyJuMPArray
-Base.promote_rule{T<:OneIndexedArray,S<:Union(AbstractArray,Number,JuMPTypes)}(::Type{T},::Type{S}) = DummyJuMPArray
-
 # The following methods are needed on v0.3 since T(x) does not fall back to convert(T,x)
 AffExpr(v::Variable) = AffExpr(Variable[v], Float64[1], 0.0)
 AffExpr(aff::AffExpr) = aff
@@ -18,11 +15,9 @@ QuadExpr(aff::AffExpr) = QuadExpr(Variable[], Variable[], Float64[], aff)
 QuadExpr(q::QuadExpr) = q
 
 _tofull(x) = x
-_tofull(x::OneIndexedArray) = x.innerArray
 
 Base.hcat(X::OneIndexedArray...) = hcat([_tofull(x) for x in X]...)
 Base.vcat(X::OneIndexedArray...) = vcat([_tofull(x) for x in X]...)
-Base.hvcat(rows::(Int...), X::OneIndexedArray...) = hvcat(rows, [_tofull(x) for x in X]...)
 
 typealias BaseTypes Union(Number,AbstractArray)
 typealias CatTypes Union(Number,JuMPTypes,AbstractArray)

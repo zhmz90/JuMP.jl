@@ -7,8 +7,7 @@ using Base.Meta
 # multivarate "dictionary" used for collections of variables/constraints
 
 abstract JuMPContainer{T,N}
-abstract JuMPArray{T,N,Q} <: JuMPContainer{T,N} # Q is true if all index sets are of the form 1:n
-typealias OneIndexedArray{T,N} JuMPArray{T,N,true}
+abstract JuMPArray{T,N} <: JuMPContainer{T,N} # Q is true if all index sets are of the form 1:n
 
 type IndexPair
     idxvar
@@ -52,6 +51,7 @@ Base.isempty(d::JuMPContainer) = isempty(_innercontainer(d))
 # the following types of index sets are allowed:
 # 0:K -- range with compile-time starting index
 # S -- general iterable set
+export @gendict
 macro gendict(instancename,T,idxpairs,idxsets...)
     N = length(idxsets)
     allranges = all(s -> (isexpr(s,:(:)) && length(s.args) == 2), idxsets)
@@ -72,48 +72,53 @@ macro gendict(instancename,T,idxpairs,idxsets...)
             rng.args[1] == 1 && # starts from 1
             length(rng.args) == 2 || rng.args[2] == 1 # steps of one
         end
-        typecode = :(type $(typename){T} <: JuMPArray{T,$N,$truearray}; innerArray::Array{T,$N}; name::String;
-                            indexsets; indexexprs::Vector{IndexPair} end)
-        getidxlhs = :(Base.getindex(d::$(typename)))
-        setidxlhs = :(Base.setindex!(d::$(typename),val))
-        getidxrhs = :(Base.getindex(d.innerArray))
-        setidxrhs = :(Base.setindex!(d.innerArray,val))
-        maplhs = :(Base.map(f::Function,d::$(typename)))
-        if truearray # return a julia Array here
-            maprhs = :(map(f,d.innerArray))
+        if truearray
+            sizes = Expr(:tuple, [rng.args[end] for rng in idxsets]...)
+            :($(esc(instancename)) = Array($T, $sizes))
         else
-            maprhs = :($(typename)(map(f,d.innerArray),d.name,d.indexsets,d.indexexprs))
+            typecode = :(type $(typename){T} <: JuMPArray{T,$N}; innerArray::Array{T,$N}; name::String;
+                                indexsets; indexexprs::Vector{IndexPair} end)
+            getidxlhs = :(Base.getindex(d::$(typename)))
+            setidxlhs = :(Base.setindex!(d::$(typename),val))
+            getidxrhs = :(Base.getindex(d.innerArray))
+            setidxrhs = :(Base.setindex!(d.innerArray,val))
+            maplhs = :(Base.map(f::Function,d::$(typename)))
+            if truearray # return a julia Array here
+                maprhs = :(map(f,d.innerArray))
+            else
+                maprhs = :($(typename)(map(f,d.innerArray),d.name,d.indexsets,d.indexexprs))
+            end
+            wraplhs = :(JuMPContainer_from(d::$(typename),inner)) # helper function that wraps array into JuMPArray of similar type
+            wraprhs = :($(typename)(inner, d.name, d.indexsets, d.indexexprs))
+            for i in 1:N
+                varname = symbol(string("x",i))
+
+                push!(getidxlhs.args,:($varname))
+                push!(setidxlhs.args,:($varname))
+
+                push!(getidxrhs.args,:(isa($varname, Int) ? $varname+$(offset[i]) : $varname ))
+                push!(setidxrhs.args,:($varname+$(offset[i])))
+
+            end
+
+            badgetidxlhs = :(Base.getindex(d::$(typename),wrong...))
+            badgetidxrhs = :(error("Wrong number of indices for ",d.name,
+                                   ", expected ",length(d.indexsets)))
+
+            funcs = :($getidxlhs = $getidxrhs; $setidxlhs = $setidxrhs;
+                      $maplhs = $maprhs; $badgetidxlhs = $badgetidxrhs)
+            if !truearray
+                funcs = :($funcs; $wraplhs = $wraprhs)
+            end
+            geninstance = :($(esc(instancename)) = $(typename)(Array($T),$(string(instancename)),$(esc(Expr(:tuple,idxsets...))),$(idxpairs)))
+            for i in 1:N
+                push!(geninstance.args[2].args[2].args, :(length($(esc(idxsets[i])))))
+            end
+            eval(Expr(:toplevel, typecode))
+            eval(Expr(:toplevel, funcs))
+
+            return geninstance
         end
-        wraplhs = :(JuMPContainer_from(d::$(typename),inner)) # helper function that wraps array into JuMPArray of similar type
-        wraprhs = :($(typename)(inner, d.name, d.indexsets, d.indexexprs))
-        for i in 1:N
-            varname = symbol(string("x",i))
-
-            push!(getidxlhs.args,:($varname))
-            push!(setidxlhs.args,:($varname))
-
-            push!(getidxrhs.args,:(isa($varname, Int) ? $varname+$(offset[i]) : $varname ))
-            push!(setidxrhs.args,:($varname+$(offset[i])))
-
-        end
-
-        badgetidxlhs = :(Base.getindex(d::$(typename),wrong...))
-        badgetidxrhs = :(error("Wrong number of indices for ",d.name,
-                               ", expected ",length(d.indexsets)))
-
-        funcs = :($getidxlhs = $getidxrhs; $setidxlhs = $setidxrhs;
-                  $maplhs = $maprhs; $badgetidxlhs = $badgetidxrhs)
-        if !truearray
-            funcs = :($funcs; $wraplhs = $wraprhs)
-        end
-        geninstance = :($(esc(instancename)) = $(typename)(Array($T),$(string(instancename)),$(esc(Expr(:tuple,idxsets...))),$(idxpairs)))
-        for i in 1:N
-            push!(geninstance.args[2].args[2].args, :(length($(esc(idxsets[i])))))
-        end
-        eval(Expr(:toplevel, typecode))
-        eval(Expr(:toplevel, funcs))
-
-        return geninstance
 
         #= TODO: Use this with code in JuMPArray.jl once Julia can make it efficient
         if all([length(s.args) == 3 for s in idxsets])
@@ -167,7 +172,6 @@ end
 
 JuMPContainer_from(x::JuMPDict,inner) =
     JuMPDict(inner, x.name, x.indexsets, x.indexexprs, x.condition)
-JuMPContainer_from(x::OneIndexedArray, inner) = inner
 
 function getValue(x::JuMPContainer)
     getvalue_warn(x)
@@ -188,14 +192,6 @@ Base.abs(x::JuMPDict) = map(abs, x)
 Base.size(x::JuMPArray)   = size(x.innerArray)
 Base.size(x::JuMPArray,k) = size(x.innerArray,k)
 Base.issym(x::JuMPArray) = issym(x.innerArray)
-Base.trace(x::OneIndexedArray) = trace(x.innerArray)
-Base.diag(x::OneIndexedArray) = diag(x.innerArray)
-Base.diagm{T}(x::JuMPArray{T,1,true}) = diagm(x.innerArray)
-
-# special-case OneIndexedArray iteration
-Base.start(x::OneIndexedArray)   = start(x.innerArray)
-Base.next(x::OneIndexedArray, k) =  next(x.innerArray, k)
-Base.done(x::OneIndexedArray, k) =  done(x.innerArray, k)
 
 function Base.start(x::JuMPContainer)
     warn("Iteration over JuMP containers is deprecated. Use keys(d) and values(d) instead")
@@ -230,7 +226,6 @@ Base.done(x::JuMPDict,k)  = done(x.tupledict,k)
 Base.eltype{T}(x::JuMPContainer{T}) = T
 
 Base.full(x::JuMPContainer) = x
-Base.full(x::OneIndexedArray) = x.innerArray
 
 # keys/vals iterations for JuMPContainers
 Base.keys(d::JuMPDict)    = keys(d.tupledict)
@@ -255,5 +250,3 @@ Base.start(it::KeyIterator)   =  start(it.x.innerArray)
 Base.next(it::KeyIterator, k) =  _next_index(it.x, k), next(it.x.innerArray, k)[2]
 Base.done(it::KeyIterator, k) =   done(it.x.innerArray, k)
 Base.length(it::KeyIterator)  = length(it.x.innerArray)
-
-export @gendict

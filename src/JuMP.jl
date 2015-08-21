@@ -101,6 +101,9 @@ type Model
     # List of JuMPContainer{Variables} associated with model
     dictList::Vector
 
+    # Dictionary that maps JuMPContainer/Array{Variable} => group name
+    groupName::Dict{Any,Symbol}
+
     # storage vector for merging duplicate terms
     indexedVector::IndexedVector{Float64}
 
@@ -150,7 +153,8 @@ function Model(;solver=UnsetSolver())
           Any[],                    # callbacks
           nothing,                  # solvehook
           nothing,                  # printhook
-          JuMPContainer[],          # dictList
+          Any[],                    # dictList
+          Dict{Any,Symbol}(),       # groupName
           IndexedVector(Float64,0), # indexedVector
           nothing,                  # nlpdata
           Dict{Symbol,Any}(),       # varDict
@@ -393,15 +397,6 @@ Base.copy(v::Variable, new_model::Model) = Variable(new_model, v.col)
 # Copy methods for variable containers
 Base.copy(d::JuMPContainer) = map(copy, d)
 Base.copy(d::JuMPContainer, new_model::Model) = map(x -> copy(x, new_model), d)
-Base.copy{T<:OneIndexedArray}(d::T) = T(map(copy, d.innerArray),
-                                       d.name,
-                                       d.indexsets,
-                                       d.indexexprs)
-Base.copy{T<:OneIndexedArray}(d::T, new_model::Model) =
-    T(map(v -> copy(v, new_model), d.innerArray),
-      d.name,
-      d.indexsets,
-      d.indexexprs)
 
 ###############################################################################
 # Generic affine expression class
@@ -586,7 +581,7 @@ type SDPConstraint <: JuMPConstraint
 end
 
 # Special-case X ≥ 0, which is often convenient
-function SDPConstraint(lhs::Union(OneIndexedArray,Matrix), rhs::Number)
+function SDPConstraint(lhs::Matrix, rhs::Number)
     rhs == 0 || error("Cannot construct a semidefinite constraint with nonzero scalar bound $rhs")
     SDPConstraint(lhs)
 end
@@ -753,11 +748,11 @@ Base.ndims(::JuMPTypes) = 0
 ##########################################################################
 # Operator overloads
 include("operators.jl")
-if VERSION > v"0.4-"
-    include(joinpath("v0.4","concatenation.jl"))
-else
-    include(joinpath("v0.3","concatenation.jl"))
-end
+# if VERSION > v"0.4-"
+#     include(joinpath("v0.4","concatenation.jl"))
+# else
+#     include(joinpath("v0.3","concatenation.jl"))
+# end
 # Writers - we support MPS (MILP + QuadObj), LP (MILP)
 include("writers.jl")
 # Macros - @defVar, sum{}, etc.

@@ -102,9 +102,9 @@ facts("[variable] JuMPContainer iteration") do
     @fact length(keys(ja))  == length(values(ja))  == 3*4*2 --> true
     @fact length(keys(jd))  == length(values(jd))  == 3*2   --> true
 
-    for (key,val) in zip(keys(oia),values(oia))
-        @fact oia[key...] === val --> true
-    end
+    # for (key,val) in zip(keys(oia),values(oia))
+    #     @fact oia[key...] === val --> true
+    # end
     for (key,val) in zip(keys(ja),values(ja))
         @fact ja[key...] === val --> true
     end

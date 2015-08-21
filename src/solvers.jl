@@ -88,7 +88,7 @@ function solve(m::Model; suppress_warnings=false,
     m.objVal = NaN
     m.colVal = fill(NaN, numCols)
     m.linconstrDuals = Array(Float64, 0)
-    
+
     if stat == :Optimal
         # If we think dual information might be available, try to get it
         # If not, return an array of the correct length
@@ -499,19 +499,18 @@ function conicconstraintdata(m::Model)
     nnz = 0
 
     # find starting column indices for sdp matrices
-    sdp_start, sdp_end = Int[], Int[]
+    sdp_indices = Int[]
     numSDPRows = 0
     numSymRows = 0
     for c in m.sdpconstr
         n = size(c.terms,1)
         @assert n == size(c.terms,2)
         @assert ndims(c.terms) == 2
-        if isa(c.terms,OneIndexedArray)
-            frst = c.terms[1,1].col
-            last = c.terms[end,end].col
-            push!(sdp_start, frst)
-            push!(sdp_end, last)
-            push!(var_cones, (:SDP,frst:last))
+        if issym(c.terms) && isa(c.terms, Matrix{Variable})
+            # TODO: push all indices into list instead of using a range
+            indices = [v.col for v in c.terms]
+            append!(sdp_indices, indices)
+            push!(var_cones, (:SDP, indices))
         else
             numSDPRows += convert(Int, n*(n+1)/2)
             for i in 1:n, j in i:n
@@ -586,8 +585,7 @@ function conicconstraintdata(m::Model)
     in_sdp = false
     for i in 1:m.numCols
         lb, ub = m.colLower[i], m.colUpper[i]
-        if i in sdp_start
-            in_sdp = true
+        if i in sdp_indices
             @assert lb == -Inf && ub == Inf
         end
 
@@ -607,12 +605,6 @@ function conicconstraintdata(m::Model)
             # do nothing
         else
             push!(free, i)
-        end
-        if in_sdp
-            @assert lb == -Inf && ub == Inf
-            if i in sdp_end
-                in_sdp = false
-            end
         end
     end
 
@@ -773,7 +765,7 @@ function conicconstraintdata(m::Model)
     @assert c == numLinRows + numBounds + numQuadRows + numSOCRows
 
     for con in m.sdpconstr
-        if !isa(con.terms, OneIndexedArray)
+        if !(issym(con.terms) && isa(con.terms, Matrix{Variable}))
             sdp_start = c + 1
             n = size(con.terms,1)
             for i in 1:n, j in i:n
