@@ -110,7 +110,7 @@ type Model
     nlpdata#::NLPData
 
     varDict::Dict{Symbol,Any} # dictionary from variable names to variable objects
-    varData::Dict
+    varData::ObjectIdDict
 
     getvalue_counter::Int # number of times we call getValue on a JuMPContainer, so that we can print out a warning
     operator_counter::Int # number of times we add large expressions
@@ -159,7 +159,7 @@ function Model(;solver=UnsetSolver())
           IndexedVector(Float64,0),    # indexedVector
           nothing,                     # nlpdata
           Dict{Symbol,Any}(),          # varDict
-          Dict(),                      # varData
+          ObjectIdDict(),              # varData
           0,                           # getvalue_counter
           0,                           # operator_counter
           Dict{Symbol,Any}(),          # ext
@@ -363,7 +363,31 @@ function getValue(v::Variable)
     ret
 end
 
-getValue(arr::Array{Variable}) = map(getValue, arr)
+function getValue(arr::Array{Variable})
+    ret = similar(arr, Float64)
+    if isempty(ret)
+        return ret
+    end
+    warnedyet = false
+    m = first(arr).m
+    # whether this was constructed via @defVar, essentially
+    registered = haskey(m.varData, arr)
+    name = registered ? m.varData[arr].name : m.colName[v.col]
+    for I in eachindex(arr)
+        # TODO: Only warn once
+        v = arr[I]
+        value = _getValue(v)
+        ret[I] = value
+        if !warnedyet && isnan(value)
+            Base.warn("Variable value not defined for $name. Check that the model was properly solved.")
+            warnedyet = true
+        end
+    end
+    if registered
+        m.varData[ret] = m.varData[arr]
+    end
+    ret
+end
 
 # Dual value (reduced cost) getter
 function getDual(v::Variable)

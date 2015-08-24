@@ -32,7 +32,8 @@ function ProblemTraits(m::Model)
     qc = !isempty(m.quadconstr)
     nlp = m.nlpdata !== nothing
     soc = !isempty(m.socconstr)
-    sdp = !isempty(m.sdpconstr)
+    # will need to change this when we add support for arbitrary variable cones
+    sdp = !isempty(m.sdpconstr) || !isempty(m.varCones)
     sos = !isempty(m.sosconstr)
     ProblemTraits(int, !(qp|qc|nlp|soc|sdp|sos), qp, qc, nlp, soc, sdp, sos, soc|sdp)
 end
@@ -235,7 +236,7 @@ function buildInternalModel(m::Model, traits=ProblemTraits(m);
             m.internalModel = MathProgBase.model(m.solver)
             # Construct a LHS matrix from the linear constraints
             A = prepConstrMatrix(m)
-            
+
             # If we have either:
             #   1) A solver that does not support the loadproblem! interface, or
             #   2) A QCP and a solver that does not support the addquadconstr! interface,
@@ -379,7 +380,7 @@ function prepProblemBounds(m::Model)
     @inbounds for ind in 1:length(objaff.vars)
         f[objaff.vars[ind].col] += objaff.coeffs[ind]
     end
-    
+
     # Create dense affine constraint bound vectors
     linconstr = m.linconstr::Vector{LinearConstraint}
     numRows = length(linconstr)

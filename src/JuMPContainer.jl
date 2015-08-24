@@ -16,20 +16,28 @@ end
 #= Generated on the fly
 type JuMPArray{T}
     innerArray::Array{T,N}
-    name::String
-    indexsets
+    meta::Dict{Symbol,Any}
 end
 =#
 type JuMPDict{T,N} <: JuMPContainer{T,N}
     tupledict::Dict{NTuple{N,Any},T}
     meta::Dict{Symbol,Any}
 
-    JuMPDict() = new(Dict{NTuple{N},T}(), Dict{Symbol,Any}())
-    JuMPDict(tupledict::Dict{NTuple{N,Any},T}, meta::Dict{Symbol,Any}) =
-        new(tupledict, meta)
+    JuMPDict() = new(Dict{NTuple{N,Any},T}(), Dict{Symbol,Any}())
 end
 
-JuMPDict{T,N}(d::Dict{NTuple{N,Any},T}) = JuMPDict(d, Dict{Symbol,Any}())
+function JuMPDict{T,N}(d::Dict{NTuple{N,Any},T})
+    tmp = JuMPDict{T,N}()
+    tmp.tupledict = d
+    tmp
+end
+
+function JuMPDict{T,N}(d::Dict{NTuple{N,Any},T}, meta::Dict{Symbol,Any})
+    tmp = JuMPDict{T,N}()
+    tmp.tupledict = d
+    tmp.meta = meta
+    tmp
+end
 
 type JuMPContainerData
     name
@@ -85,13 +93,20 @@ macro gendict(instancename,T,idxpairs,idxsets...)
                     error("Currently only ranges with integer compile-time starting values are allowed as index sets. $(idxsets[i].args[1]) is not an integer in range $(idxsets[i]).")
                 end
             end
-            typecode = :(type $(typename){T} <: JuMPArray{T,$N}; innerArray::Array{T,$N}; meta::Dict{Symbol,Any}; end)
+            typecode = quote
+                type $(typename){T} <: JuMPArray{T,$N}
+                    innerArray::Array{T,$N}
+                    meta::Dict{Symbol,Any}
+                end
+            end
+            constrlhs = :($(typename)(innerArray::Array))
+            constrrhs = :($(typename)(innerArray, Dict{Symbol,Any}()))
             getidxlhs = :(Base.getindex(d::$(typename)))
             setidxlhs = :(Base.setindex!(d::$(typename),val))
             getidxrhs = :(Base.getindex(d.innerArray))
             setidxrhs = :(Base.setindex!(d.innerArray,val))
             maplhs = :(Base.map(f::Function,d::$(typename)))
-            maprhs = :($(typename)(map(f,d.innerArray),copy(d.meta)))
+            maprhs = :($(typename)(map(f,d.innerArray),d.meta))
             wraplhs = :(JuMPContainer_from(d::$(typename),inner)) # helper function that wraps array into JuMPArray of similar type
             wraprhs = :($(typename)(inner))
             for i in 1:N
@@ -109,10 +124,15 @@ macro gendict(instancename,T,idxpairs,idxsets...)
             badgetidxrhs = :(data = printdata(d);
                             error("Wrong number of indices for ",data.name, ", expected ",length(data.indexsets)))
 
-            funcs = :($getidxlhs = $getidxrhs; $setidxlhs = $setidxrhs;
-                      $maplhs = $maprhs; $badgetidxlhs = $badgetidxrhs;
-                      $wraplhs = $wraprhs)
-            geninstance = :($(esc(instancename)) = $(typename)(Array($T), Dict{Symbol,Any}()))
+            funcs = quote
+                $constrlhs    = $constrrhs
+                $getidxlhs    = $getidxrhs
+                $setidxlhs    = $setidxrhs
+                $maplhs       = $maprhs
+                $badgetidxlhs = $badgetidxrhs
+                $wraplhs      = $wraprhs
+            end
+            geninstance = :($(esc(instancename)) = $(typename)(Array($T)))
             for i in 1:N
                 push!(geninstance.args[2].args[2].args, :(length($(esc(idxsets[i])))))
             end
@@ -176,11 +196,19 @@ function _getValueInner(x)
     vals
 end
 
-JuMPContainer_from(x::JuMPDict,inner) = JuMPDict(inner, copy(inner.meta))
+JuMPContainer_from(x::JuMPDict,inner) = JuMPDict(inner)
 
 function getValue(x::JuMPContainer)
     getvalue_warn(x)
-    JuMPContainer_from(x,_getValueInner(x))
+    ret = JuMPContainer_from(x,_getValueInner(x))
+    # I guess copy!(::Dict, ::Dict) isn't defined, so...
+    for (key,val) in x.meta
+        ret.meta[key] = val
+    end
+    m = getmeta(x, :model)
+    # cache indexing info for new container for printing purposes
+    m.varData[ret] = printdata(x)
+    ret
 end
 
 # delegate zero-argument functions
@@ -242,6 +270,10 @@ Base.keys(d::JuMPArray)   = KeyIterator(d)
 Base.values(d::JuMPArray) = ValueIterator(d.innerArray)
 
 # TODO: add keys/values for Array
+Base.keys(d::Array) = CartesianRange(size(d))
+Base.start(ci::CartesianIndex)    = start(ci.I)
+Base.next( ci::CartesianIndex, k) = next(ci.I, k)
+Base.done( ci::CartesianIndex, k) = done(ci.I, k)
 Base.values(d::Array) = d
 
 # Wrapper type so that you can't access the values directly

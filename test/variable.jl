@@ -98,17 +98,32 @@ facts("[variable] JuMPContainer iteration") do
     @defVar(m, ja[1:3,2:5,1:2])
     @defVar(m, jd[1:3,[:red,:blue]])
 
-    # @fact length(keys(oia)) == length(values(oia)) == 3*4*2 --> true
+    @fact length(keys(oia)) == length(values(oia)) == 3*4*2 --> true
     @fact length(keys(ja))  == length(values(ja))  == 3*4*2 --> true
     @fact length(keys(jd))  == length(values(jd))  == 3*2   --> true
 
-    # for (key,val) in zip(keys(oia),values(oia))
-    #     @fact oia[key...] === val --> true
-    # end
+    for (key,val) in zip(keys(oia),values(oia))
+        @fact oia[key...] === val --> true
+    end
     for (key,val) in zip(keys(ja),values(ja))
         @fact ja[key...] === val --> true
     end
     for (key,val) in zip(keys(jd),values(jd))
         @fact jd[key...] === val --> true
     end
+end
+
+facts("[variable] @defVar returning Array{Variable}") do
+    m = Model()
+    @defVar(m, x[1:3,1:4,1:2])
+    @defVar(m, y[1:0])
+    @defVar(m, z[1:4])
+
+    @fact typeof(x) --> Array{Variable,3}
+    @fact typeof(y) --> Array{Variable,1}
+    @fact typeof(z) --> Array{Variable,1}
+
+    @fact typeof(getValue(x)) --> Array{Float64,3}
+    @fact typeof(getValue(y)) --> Array{Float64,1}
+    @fact typeof(getValue(z)) --> Array{Float64,1}
 end
