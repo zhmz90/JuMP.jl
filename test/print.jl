@@ -156,8 +156,8 @@ facts("[print] JuMPContainer{Variable}") do
     context("issue testing") do
     # Empty JuMPContainer printing (#124)
     @defVar(m, empty_free[1:0])
-    io_test(REPLMode, empty_free, "empty_free (no indices)")
-    io_test(IJuliaMode, empty_free, "empty_free (no indices)")
+    io_test(REPLMode, empty_free, "(no indices)")
+    io_test(IJuliaMode, empty_free, "(no indices)")
     end
 end
 

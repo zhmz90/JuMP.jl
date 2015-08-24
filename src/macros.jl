@@ -117,7 +117,7 @@ function getloopedcode(c::Expr, code, condition, idxvars, idxsets, idxpairs, sym
     if hascond || hasdependentsets(idxvars,idxsets)
         # force a JuMPDict
         N = length(idxsets)
-        mac = :($(esc(varname)) = JuMPDict{$(sym),$N}(Dict{NTuple{$N},$sym}()))
+        mac = :($(esc(varname)) = JuMPDict{$(sym),$N}())
     else
         mac = Expr(:macrocall,symbol("@gendict"),esc(varname),sym,idxpairs,idxsets...)
     end
@@ -843,7 +843,7 @@ macro defVar(args...)
             $code
             registervar($m, $(quot(getname(var))), $varname)
             storecontainerdata($m, $varname, $(quot(getname(var))),
-                               $(Expr(:tuple,map(clear_dependencies,1:length(idxsets))...)),
+                               $(Expr(:tuple,idxsets...)),
                                $idxpairs, $(quot(condition)))
             $varname
         end)
@@ -857,15 +857,14 @@ macro defVar(args...)
             storecontainerdata($m, $varname, $(quot(getname(var))),
                                $(Expr(:tuple,map(clear_dependencies,1:length(idxsets))...)),
                                $idxpairs, $(quot(condition)))
+            isa($varname, JuMPContainer) && pushmeta!($varname, :model, $m)
             $varname
         end)
     end
 end
 
-function storecontainerdata(m::Model, variable, varname, idxsets, idxpairs, condition)
+storecontainerdata(m::Model, variable, varname, idxsets, idxpairs, condition) =
     m.varData[variable] = JuMPContainerData(varname, idxsets, idxpairs, condition)
-    nothing
-end
 
 macro defConstrRef(var)
     if isa(var,Symbol)

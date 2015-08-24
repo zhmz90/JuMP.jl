@@ -22,7 +22,14 @@ end
 =#
 type JuMPDict{T,N} <: JuMPContainer{T,N}
     tupledict::Dict{NTuple{N,Any},T}
+    meta::Dict{Symbol,Any}
+
+    JuMPDict() = new(Dict{NTuple{N},T}(), Dict{Symbol,Any}())
+    JuMPDict(tupledict::Dict{NTuple{N,Any},T}, meta::Dict{Symbol,Any}) =
+        new(tupledict, meta)
 end
+
+JuMPDict{T,N}(d::Dict{NTuple{N,Any},T}) = JuMPDict(d, Dict{Symbol,Any}())
 
 type JuMPContainerData
     name
@@ -40,7 +47,7 @@ Base.setindex!(d::JuMPDict, value, t...) = (d.tupledict[t] = value)
 function Base.map{T,N}(f::Function, d::JuMPDict{T,N})
     ret = Base.return_types(f, @compat(Tuple{T}))
     R = (length(ret) == 1 ? ret[1] : Any)
-    x = JuMPDict(Dict{NTuple{N,Any},R}())
+    x = JuMPDict{R,N}()
     for (k,v) in d.tupledict
         x.tupledict[k] = f(v)
     end
@@ -78,13 +85,13 @@ macro gendict(instancename,T,idxpairs,idxsets...)
                     error("Currently only ranges with integer compile-time starting values are allowed as index sets. $(idxsets[i].args[1]) is not an integer in range $(idxsets[i]).")
                 end
             end
-            typecode = :(type $(typename){T} <: JuMPArray{T,$N}; innerArray::Array{T,$N}; end)
+            typecode = :(type $(typename){T} <: JuMPArray{T,$N}; innerArray::Array{T,$N}; meta::Dict{Symbol,Any}; end)
             getidxlhs = :(Base.getindex(d::$(typename)))
             setidxlhs = :(Base.setindex!(d::$(typename),val))
             getidxrhs = :(Base.getindex(d.innerArray))
             setidxrhs = :(Base.setindex!(d.innerArray,val))
             maplhs = :(Base.map(f::Function,d::$(typename)))
-            maprhs = :($(typename)(map(f,d.innerArray)))
+            maprhs = :($(typename)(map(f,d.innerArray),copy(d.meta)))
             wraplhs = :(JuMPContainer_from(d::$(typename),inner)) # helper function that wraps array into JuMPArray of similar type
             wraprhs = :($(typename)(inner))
             for i in 1:N
@@ -99,17 +106,13 @@ macro gendict(instancename,T,idxpairs,idxsets...)
             end
 
             badgetidxlhs = :(Base.getindex(d::$(typename),wrong...))
-            badgetidxrhs = :(if isempty(d)
-                                error("Wrong number of indices")
-                            else
-                                data = first(values(d)).m.varData[d]
-                                error("Wrong number of indices for ",data.name, ", expected ",length(data.indexsets))
-                            end)
+            badgetidxrhs = :(data = printdata(d);
+                            error("Wrong number of indices for ",data.name, ", expected ",length(data.indexsets)))
 
             funcs = :($getidxlhs = $getidxrhs; $setidxlhs = $setidxrhs;
                       $maplhs = $maprhs; $badgetidxlhs = $badgetidxrhs;
                       $wraplhs = $wraprhs)
-            geninstance = :($(esc(instancename)) = $(typename)(Array($T)))
+            geninstance = :($(esc(instancename)) = $(typename)(Array($T), Dict{Symbol,Any}()))
             for i in 1:N
                 push!(geninstance.args[2].args[2].args, :(length($(esc(idxsets[i])))))
             end
@@ -138,10 +141,13 @@ macro gendict(instancename,T,idxpairs,idxsets...)
     else
         # JuMPDict
         return :(
-            $(esc(instancename)) = JuMPDict{$T,$N}(Dict{NTuple{$N},$T}())
+            $(esc(instancename)) = JuMPDict{$T,$N}()
         )
     end
 end
+
+pushmeta!(x::JuMPContainer, sym::Symbol, val) = (x.meta[sym] = val)
+getmeta(x::JuMPContainer, sym::Symbol) = x.meta[sym]
 
 # duck typing approach -- if eltype(innerArray) doesn't support accessor, will fail
 for accessor in (:getDual, :getLower, :getUpper)
@@ -157,23 +163,20 @@ _innercontainer(x::JuMPDict)  = x.tupledict
 function _getValueInner(x)
     vars = _innercontainer(x)
     vals = _similar(vars)
-    if !isempty(vals)
-        m = first(values(x)).m
-        data = m.varData[x]
-        warnedyet = false
-        for I in eachindex(vars)
-            tmp = _getValue(vars[I])
-            if isnan(tmp) && !warnedyet
-                warn("Variable value not defined for entry of $(data.name). Check that the model was properly solved.")
-                warnedyet = true
-            end
-            vals[I] = tmp
+    data = printdata(x)
+    warnedyet = false
+    for I in eachindex(vars)
+        tmp = _getValue(vars[I])
+        if isnan(tmp) && !warnedyet
+            warn("Variable value not defined for entry of $(data.name). Check that the model was properly solved.")
+            warnedyet = true
         end
+        vals[I] = tmp
     end
     vals
 end
 
-JuMPContainer_from(x::JuMPDict,inner) = JuMPDict(inner)
+JuMPContainer_from(x::JuMPDict,inner) = JuMPDict(inner, copy(inner.meta))
 
 function getValue(x::JuMPContainer)
     getvalue_warn(x)
@@ -207,9 +210,7 @@ function Base.next(x::JuMPArray,k)
 end
 
 function _next_index{T,N}(x::JuMPArray{T,N}, k)
-    @assert !isempty(x)
-    m = first(x.innerArray).m
-    data = m.varData[x]
+    data = printdata(x)
     ntuple(N) do index
         cprod = 1
         for i in 1:(index-1)

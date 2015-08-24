@@ -90,6 +90,9 @@ typealias PrintSymbols Dict{Symbol,UTF8String}
 # If not already mathmode, then wrap in MathJax start/close tags
 math(s,mathmode) = mathmode ? s : "\$\$ $s \$\$"
 
+# helper to look up corresponding JuMPContainerData
+printdata(m::Model, v) = m.varData[v]
+
 #------------------------------------------------------------------------
 ## Model
 #------------------------------------------------------------------------
@@ -265,13 +268,13 @@ function var_str(mode, m::Model, col::Int; mathmode=true)
     colNames = mode == REPLMode ? m.colNames : m.colNamesIJulia
     if colNames[col] === EMPTYSTRING
         for cont in m.dictList
-            fill_var_names(m, mode, colNames, cont)
+            fill_var_names(mode, colNames, cont)
         end
     end
     return math(colNames[col] == "" ? "col_$col" : colNames[col], mathmode)
 end
-function fill_var_names{N}(m::Model, mode, colNames, v::JuMPArray{Variable,N})
-    data = m.varData[v]
+function fill_var_names{N}(mode, colNames, v::JuMPArray{Variable,N})
+    data = printdata(v)
     idxsets = data.indexsets
     lengths = map(length, idxsets)
     name = data.name
@@ -288,7 +291,7 @@ function fill_var_names{N}(m::Model, mode, colNames, v::JuMPArray{Variable,N})
         end
     end
 end
-function fill_var_names(m::Model, mode, colNames, v::JuMPDict{Variable})
+function fill_var_names(mode, colNames, v::JuMPDict{Variable})
     name = m.varData[v].name
     for (ind,var) in zip(keys(v),values(v))
         if mode == IJuliaMode
@@ -298,21 +301,24 @@ function fill_var_names(m::Model, mode, colNames, v::JuMPDict{Variable})
         end
     end
 end
-function fill_var_names(m::Model, mode, colNames, v::Array{Variable})
+function fill_var_names(mode, colNames, v::Array{Variable})
     isempty(v) && return
     sizes = size(v)
-    if haskey(m.varData, v)
-        name = m.varData[v].name
-        for (ii,var) in enumerate(v)
-            ind = ind2sub(sizes, ii)
-            colNames[var.col] = if mode === IJuliaMode
-                string(name, "_{", join(ind, ","), "}")
-            else
-                string(name,  "[", join(ind, ","), "]")
-            end
+    m = first(v).m
+    if !haskey(m.varData, v)
+        return
+    end
+    name = m.varData[v].name
+    for (ii,var) in enumerate(v)
+        @assert var.m === m
+        ind = ind2sub(sizes, ii)
+        colNames[var.col] = if mode === IJuliaMode
+            string(name, "_{", join(ind, ","), "}")
+        else
+            string(name,  "[", join(ind, ","), "]")
         end
     end
-    nothing
+    return
 end
 
 # Handlers to use correct symbols
@@ -350,15 +356,35 @@ exprToStr(n::Norm) = exprToStr(convert(SOCExpr, copy(n)))
 #------------------------------------------------------------------------
 Base.print(io::IO, j::JuMPContainer{Variable}) = print(io, cont_str(REPLMode,j))
 Base.show( io::IO, j::JuMPContainer{Variable}) = print(io, cont_str(REPLMode,j))
-Base.writemime(io::IO, ::MIME"text/latex", j::JuMPContainer{Variable}) =
+function Base.print{N}(io::IO, j::Array{Variable,N})
+    isempty(j) && return string("(no indices)")
+    idx = first(j).col - 1
+    for v in j
+        if idx == v.col - 1
+            idx = v.col
+        # hacky bit of code that calls methods used in Base
+        elseif N == 1
+            Base.show_vector(io, j, "[", "]")
+        else
+            Base.showarray(io, j, header=Base._limit_output, repr=!Base._limit_output)
+        end
+    end
+    print(io, cont_str(REPLMode,j))
+end
+Base.show( io::IO, j::Array{Variable}) = print(io, j)
+Base.writemime(io::IO, ::MIME"text/latex", j::Union(JuMPContainer{Variable},Array{Variable})) =
     print(io, cont_str(IJuliaMode,j,mathmode=false))
 # Generic string converter, called by mode-specific handlers
+
+# Assumes that !isempty(j)
+_getmodel(j::Array) = first(values(j)).m
+_getmodel(j::JuMPContainer) = getmeta(j, :model)
 function cont_str(mode, j, sym::PrintSymbols)
     # Check if anything in the container
     isempty(j) && return string("(no indices)")
 
-    m = first(values(j)).m
-    data = m.varData[j]
+    m = _getmodel(j)
+    data = printdata(j)
 
     # 1. construct the part with variable name and indexing
     locvars = map(data.indexexprs) do tmp
@@ -486,12 +512,12 @@ cont_str(::Type{IJuliaMode}, j; mathmode=true) =
 Base.print(io::IO, j::JuMPContainer{Float64}) = print(io, val_str(REPLMode,j))
 Base.show( io::IO, j::JuMPContainer{Float64}) = print(io, val_str(REPLMode,j))
 function val_str{N}(mode, j::JuMPArray{Float64,N})
-    if isempty(j)
-        return "(no entries)"
-    end
-    m = first(values(j)).m
-    data = m.varData[j]
+    m = _getmodel(j)
+    data = printdata(j)
     out_str = "$(data.name): $N dimensions:\n"
+    if isempty(j)
+        return out_str * "  (no entries)"
+    end
 
     function val_str_rec(depth, parent_index::Vector{Any}, parent_str::String)
         # Turn index set into strings
@@ -551,8 +577,8 @@ end
 function val_str(mode, dict::JuMPDict{Float64})
     nelem = length(dict.tupledict)
     isempty(dict) && return ""
-    m = first(dict).m
-    data = m.varData[dict]
+    m = _getmodel(dict)
+    data = printdata(dict)
     out_str  = "$(dict.name): $(length(data.indexsets)) dimensions, $nelem "
     out_str *= nelem == 1 ? "entry" : "entries"
     out_str *= ":"
