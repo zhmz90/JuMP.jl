@@ -566,8 +566,10 @@ function solvenlp(m::Model, traits; suppress_warnings=false)
     MathProgBase.optimize!(m.internalModel)
     stat = MathProgBase.status(m.internalModel)
 
-    m.objVal = MathProgBase.getobjval(m.internalModel)
-    m.colVal = MathProgBase.getsolution(m.internalModel)
+    if stat != :Infeasible && stat != :Unbounded
+        m.objVal = MathProgBase.getobjval(m.internalModel)
+        m.colVal = MathProgBase.getsolution(m.internalModel)
+    end
 
     if stat != :Optimal
         suppress_warnings || warn("Not solved to optimality, status: $stat")
@@ -596,15 +598,13 @@ function getValue(x::Union(ReverseDiffSparse.ParametricExpressionWithParams,Reve
     found = false
     m = nothing
     for item in ReverseDiffSparse.expression_data(x)
-        if isa(item, JuMPDict{Variable})
-            var = first(values(item.tupledict))
-            m = var.m
+        if isa(item, JuMPContainer)
             found = true
+            m = getmeta(item, :model)
             break
-        elseif isa(item, JuMPArray{Variable})
-            m = item.innerArray[1].m
+        elseif isa(item, Array{Variable}) && !isempty(item)
             found = true
-            break
+            m = first(item).m
         elseif isa(item, Variable)
             found = true
             m = item.m

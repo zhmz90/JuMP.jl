@@ -65,6 +65,21 @@ facts("[variable] get and set bounds") do
     @fact getUpper(fixedvar) --> 5
 end
 
+facts("[variable] get and set values") do
+    m = Model()
+    @defVar(m, x[1:3])
+    x0 = [1:3]
+    setValue(x, x0)
+    @fact getValue(x) --> x0
+
+    @defVar(m, y[1:3,1:2])
+    if VERSION >= v"0.4-"
+        @fact_throws DimensionMismatch setValue(y, [1:6])
+    else
+        @fact_throws ErrorException setValue(y, [1:6])
+    end
+end
+
 facts("[variable] get and set category") do
     m = Model()
     @defVar(m, x[1:3])
@@ -98,12 +113,15 @@ facts("[variable] JuMPContainer iteration") do
     @defVar(m, ja[1:3,2:5,1:2])
     @defVar(m, jd[1:3,[:red,:blue]])
 
-    @fact length(keys(oia)) == length(values(oia)) == 3*4*2 --> true
+    @fact length(oia) == 3*4*2 --> true
     @fact length(keys(ja))  == length(values(ja))  == 3*4*2 --> true
     @fact length(keys(jd))  == length(values(jd))  == 3*2   --> true
 
-    for (key,val) in zip(keys(oia),values(oia))
-        @fact oia[key...] === val --> true
+    # TODO: make this more coherent
+    index = 1
+    for k in 1:2, j in 1:4, i in 1:3
+        @fact oia[i,j,k] === oia[index] --> true
+        index += 1
     end
     for (key,val) in zip(keys(ja),values(ja))
         @fact ja[key...] === val --> true
@@ -111,4 +129,38 @@ facts("[variable] JuMPContainer iteration") do
     for (key,val) in zip(keys(jd),values(jd))
         @fact jd[key...] === val --> true
     end
+    for (ii,jj,kk,v) in ja
+        @fact ja[ii,jj,kk] === v --> true
+    end
+    for (ii,jj,v) in jd
+        @fact jd[ii,jj] === v --> true
+    end
+end
+
+facts("[variable] @defVar returning Array{Variable}") do
+    m = Model()
+    @defVar(m, x[1:3,1:4,1:2])
+    @defVar(m, y[1:0])
+    @defVar(m, z[1:4])
+
+    @fact typeof(x) --> Array{Variable,3}
+    @fact typeof(y) --> Array{Variable,1}
+    @fact typeof(z) --> Array{Variable,1}
+
+    @fact typeof(getValue(x)) --> Array{Float64,3}
+    @fact typeof(getValue(y)) --> Array{Float64,1}
+    @fact typeof(getValue(z)) --> Array{Float64,1}
+end
+
+facts("[variable] getValue on empty things") do
+    m = Model()
+    @defVar(m, x[1:4,  1:0,1:3])   # Array{Variable}
+    @defVar(m, y[1:4,  2:1,1:3]) # JuMPArray
+    @defVar(m, z[1:4,Set(),1:3]) # JuMPDict
+
+    @fact getValue(x) --> Array(Float64, 4, 0, 3)
+    @fact typeof(getValue(y)) <: JuMP.JuMPArray{Float64} --> true
+    @fact size(getValue(y)) --> (4,0,3)
+    @fact typeof(getValue(z)) --> JuMP.JuMPDict{Float64,3}
+    @fact length(getValue(z)) --> 0
 end
